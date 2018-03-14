@@ -1,4 +1,4 @@
 # ECE6780Project
 Project for Embedded Systems
-Rev-
+Rev A
 Making an edit
