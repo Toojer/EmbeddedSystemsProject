@@ -44,7 +44,7 @@ void TIM2_IRQHandler(void)   //This comes from startup_stm32f072xb.s  Lab2 expla
 	  TIM2->SR     = 0;           //Clear flag
 }
 
-
+uint8_t GyroDataOutput(uint8_t GetSet, uint8_t valueToSet);
 void transmitChar(char);
 void transmitString(char*);
 void clearString(char* stringVal,int n);
@@ -52,12 +52,13 @@ uint8_t matchString(char* str1, char* str2,uint8_t n);
 
 void USART3_4_IRQHandler(void)
 {
-	char* message = "\nError has to be 'red', 'blue', 'green' or 'orange'\n";
+	char* message = "\nError has to be 'gyro','fwd', 'bck', 'lft' or 'rgt'\n";
 	char* wrong   = "\nYou Ruined It!\n";
 	char* command = "\nCMD?";
 	char* CMDACK0 = "\nTurned OFF LED";
 	char* CMDACK1 = "\nTurned ON LED";
 	char* CMDACK2 = "\nToggled LED";
+	char* gyroMSG = "Do you want Gyro Info On?";
 	
 	static uint16_t GPIOPin = 0;
 	static uint8_t    state = 0;
@@ -78,7 +79,7 @@ void USART3_4_IRQHandler(void)
 	switch(state)
 		  { 
 		    case 0:
-	        if((matchString("red",StrRxChar,n-1)))
+	        if((matchString("fwd",StrRxChar,n-1)))
 				  { 
 					  GPIOPin = GPIO_PIN_6;
 				    transmitString(command);
@@ -87,7 +88,7 @@ void USART3_4_IRQHandler(void)
 						clearString(StrRxChar,n);		
 						n=0;
 				  }
-				  else if(matchString("green",StrRxChar,n-1))
+				  else if(matchString("bck",StrRxChar,n-1))
 				  {
 					  GPIOPin = GPIO_PIN_9;
 				    transmitString(command);
@@ -96,7 +97,7 @@ void USART3_4_IRQHandler(void)
 						clearString(StrRxChar,n);
             n=0;						
 				  }
-			    else if( matchString("blue",StrRxChar,n-1))
+			    else if( matchString("rgt",StrRxChar,n-1))
 				  {
 					  GPIOPin = GPIO_PIN_7;
 				    transmitString(command);
@@ -105,7 +106,7 @@ void USART3_4_IRQHandler(void)
 						clearString(StrRxChar,n);
 						n=0;
 				  }
-				  else if(matchString("orange",StrRxChar,n-1))
+				  else if(matchString("lft",StrRxChar,n-1))
 				  {
 					  GPIOPin = GPIO_PIN_8;
 				    transmitString(command);
@@ -114,6 +115,16 @@ void USART3_4_IRQHandler(void)
 						clearString(StrRxChar,n);	
 					  n=0;
 				  }
+					else if(matchString("gyro",StrRxChar,n-1))
+					{
+						state = 2;
+					  GyroDataOutput(1,0); //set gyro to not output
+						transmitChar('\n');
+						transmitString(gyroMSG);
+						transmitChar('\n');
+						clearString(StrRxChar,n);
+					
+					}
 				  else 
 				  {
 					  transmitString(message);
@@ -131,6 +142,7 @@ void USART3_4_IRQHandler(void)
 	  		    transmitString(CMDACK0);
 						transmitChar('\n');
 						clearString(StrRxChar,n);
+						state = 0;
 					}
 			  	else if(matchString("on",StrRxChar,n-1))
 				  {
@@ -138,6 +150,7 @@ void USART3_4_IRQHandler(void)
   			    transmitString(CMDACK1);	
 						transmitChar('\n');
 						clearString(StrRxChar,n);
+						state = 0;
 	  			}
 		  		else if(matchString("toggle",StrRxChar,n-1))
 			  	{
@@ -145,16 +158,28 @@ void USART3_4_IRQHandler(void)
 			      transmitString(CMDACK2);
 						transmitChar('\n');
 						clearString(StrRxChar,n);
+						state = 0;
   				} 
 	  			else
 					{
 		  		  transmitString(wrong);
 						transmitChar('\n');
 						clearString(StrRxChar,n);
+						state = 0;
 				  }
-			  	state = 0;
-					//clearString(StrRxChar,n);
 		      break;
+				case 2:
+					 if(matchString("on",StrRxChar,n-1))
+					 {	
+					  GyroDataOutput(1,1); //set gyro to output
+				   }
+					 else
+					 {
+						GyroDataOutput(1,0);
+					 }						 //set gyro to not output
+					 clearString(StrRxChar,n);
+					 state = 0;
+				  break;
 	  }//end switch statement
 	}//end if	
 }//end function

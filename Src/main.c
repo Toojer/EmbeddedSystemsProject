@@ -9,25 +9,40 @@
 #include "main.h"
 #include "stm32f0xx_hal.h"
 
-
+	/* --Lab 3 - PWM controller  */ //I have this setup for PC6 and PC7 getting Tim2 and Tim3 outputs.  Change to PBx GPIO pin
+	/* --Lab 4 - USART for console control   Using PC10 and PC11*/
+	/* --Lab 5 - I2C for Gyroscope    Using PB15 SDA    PB13 SCL  PC0 SPI/I2C mode   PB14 Slave addr of gyroscope*/
+	/* Lab 8 Encoder Counter*/
+	
 /* Private function prototypes -----------------------------------------------*/
+void clearString(char* stringVal,int n);
 void SystemClock_Config(void);
-
-/**
-  * @brief  The application entry point.
-  *
-  * @retval None
-  */
-
+void pwm_initialize(void);
+void I2C2_Setup(void);
+void USART3_Setup(void);
+int16_t readGyro_Y(int16_t,int16_t);
+uint16_t itoa(int16_t cNum, char *cString);
+int16_t GyroToRPM(int16_t GyroData);
+void RPMToDutyCycle(int16_t RPM);
 void transmitString(char* character);
 void transmitChar(char);
 uint8_t transmitComplete(void);
+uint8_t GyroDataOutput(uint8_t , uint8_t);
 void initiateTransaction(uint8_t Addr, uint8_t numBytes,uint8_t rd_wr);
 uint8_t setupGyro(uint8_t Addr, uint8_t value);	
 uint8_t readData(void);
 int16_t read2byteData(void);
 uint8_t transmitData(uint8_t data,uint8_t numBytes);
 uint8_t transmitComplete(void);
+static uint8_t transmitGyroData=1;
+/**
+  * @brief  The application entry point.
+  *
+  * @retval None
+  */
+
+
+
 
 int main(void)
 {
@@ -37,33 +52,221 @@ int main(void)
   /* Configure the system clock */
   SystemClock_Config();
   /* Enable the Peripheral Clocks*/
-	RCC->AHBENR  |= RCC_AHBENR_GPIOCEN|RCC_AHBENR_GPIOBEN;   //enable GPIOC and GPIOB Clock
+	RCC->AHBENR  |= RCC_AHBENR_GPIOCEN|RCC_AHBENR_GPIOBEN|RCC_AHBENR_GPIOAEN;   //enable GPIOC and GPIOB GPIOA Clock
 	RCC->APB1ENR |= RCC_APB1ENR_USART3EN|RCC_APB1ENR_TIM3EN|RCC_APB1ENR_TIM2EN|RCC_APB1ENR_I2C2EN; //enable USART3 clock Enable Timer 2 (TIM2EN) and Timer 3 (TIM3EN) registers  and I2C2 6.4.8 Peripheral Manual
-	 
 	/* Set up USART3 */
-	GPIOC->AFR[1] |= (GPIO_AF1_USART3 << GPIO_AFRH_AFSEL10_Pos)|(GPIO_AF1_USART3 << GPIO_AFRH_AFSEL11_Pos);  //Set PC10 and PC11 AFR registers to USART3
-	GPIOC->MODER  |= (2 << GPIO_MODER_MODER10_Pos)|(2 << GPIO_MODER_MODER11_Pos); //PC10 USART3_TX and PC11 USART3_RX to Alternate function mode
-	USART3->BRR  = HAL_RCC_GetHCLKFreq()/115200;
-	USART3->CR1 |= USART_CR1_UE|USART_CR1_TE|USART_CR1_RE|USART_CR1_RXNEIE; //Enable UART,TX,RX and RXInterrupt
-	  // Enable USART_Rx Interrupt //
-	NVIC_EnableIRQ(USART3_4_IRQn);
-	NVIC_SetPriority(USART3_4_IRQn,4); //set interrupt priority or USART
-	/* End USART3 setup */
-	
+	USART3_Setup();
 	/* Setup PWM */
-	  // Configure Timer2 //
+	pwm_initialize(); 
+  /* I2C2 Setup */
+	I2C2_Setup();
+	HAL_Delay(100);
+	/*Configure GPIOA Pins for Motor Direction*/
+	GPIOA->MODER |= 1 << GPIO_MODER_MODER1_Pos | 1 << GPIO_MODER_MODER2_Pos; //set PC1 and PC2 to general purp OUtput
+	/* Enable the Gyroscope */
+	initiateTransaction(0x6B,2,0);
+	uint8_t TXComplt = setupGyro(0x20,0x0B); // enable X and Y axis
+  HAL_Delay(500);
+		
+	int16_t GyroData = 0;
+	uint16_t count = 0;
+	char str[100] = ""; 
+  int16_t GyroCal = 0;
+	int16_t RPM = 0;
+  //Calibrate for the Gyro Offset
+	while(count<40)
+	{
+		GyroCal = readGyro_Y(GyroCal,0); //get 20 samples to find Gyro Offset
+		count++;
+		itoa(GyroCal,str);
+		transmitString(str);
+	  transmitString("\n\r");
+	}
+		int16_t Offset = GyroCal/40;
+    transmitString("Gyro Calibrated Offset = ");
+	  itoa(Offset,str);
+		transmitString(str);
+		transmitString("\n\r");	
+	
+	while (1)
+  {
+   	 
+	 // ****** Read Y-AXIS ***** */
+	  clearString(str,100);
+		//GyroData  = 0;
+		GyroData  = readGyro_Y(GyroData,Offset);
+		RPM = GyroToRPM(GyroData);
+		RPMToDutyCycle(RPM);
+		//Output to terminal//
+		transmitGyroData = GyroDataOutput(0,1); //get gyro output mode
+		if(transmitGyroData && (count % 10 == 1))
+			{ 
+			 itoa(GyroData,str);
+		   transmitString(str);
+		   transmitString("\n\r");
+		  }	
+   count++;			
+} //end while loop
+
+}
+/*********End Project Main code *********************************************************************************************/
+/**
+  * @brief System Clock Configuration
+  * @retval None
+  */
+
+void RPMToDutyCycle(int16_t RPM){
+	int16_t DutyCycle = RPM;
+	static uint16_t direction; //if the RPM is negative turn on correct direction.
+	
+	if(DutyCycle < 0 )
+	{
+		if (direction != GPIO_PIN_6)
+		{
+			GPIOC->ODR |= GPIO_PIN_6;
+			GPIOC->ODR &= ~(GPIO_PIN_7);   //set the direction of motor
+		  direction = GPIO_PIN_6;
+		}
+	  DutyCycle*=-1; //make the duty cycle a positive number
+	}
+	else
+		if (direction != GPIO_PIN_7)
+		{
+			GPIOC->ODR |= GPIO_PIN_7;
+			GPIOC->ODR &= ~(GPIO_PIN_6);   //set the direction of motor
+		  direction = GPIO_PIN_7;
+		}
+	 
+	if(DutyCycle > 100) //cap the duty cycle at 100%
+		DutyCycle = 100;
+	
+	 TIM3->CCR1  = DutyCycle; //set to duty Cycle of the CCR
+	 
+	 
+	 
+}
+
+
+int16_t GyroToRPM(int16_t GyroData){
+	
+	//float radians = 0;
+	int16_t RPM = 0;
+	//float pi = 3.14159;
+	//radians = GyroData * (pi/180);  //convert degrees per second to radians per second
+	RPM     = GyroData*(60/(360));
+	return RPM;
+}
+uint8_t GyroDataOutput(uint8_t GetSet, uint8_t valueToSet){
+	static uint8_t TxGyroData = 1;
+	if(GetSet)//set value if GetSet = 1;
+	 TxGyroData = valueToSet;
+	return TxGyroData; 
+}
+
+const char pcDigits[] = "0123456789"; /* variable used by itoa function */
+uint16_t itoa(int16_t cNum, char *cString)
+{
+    char* ptr;
+    uint16_t uTemp = 0;
+    uint16_t length = 0;
+	  uint8_t neg = 0;
+    
+	  if (cNum < 0)
+    {
+       neg = 1;
+			 cNum *= -1;
+			length = 1;
+    }
+	uTemp = cNum;
+	
+        // Find out the length of the number, in decimal base
+    
+    while (uTemp > 0)
+    {
+        uTemp /= 10;
+        length++;
+    }
+
+    // Do the actual formatting, right to left
+    ptr = cString + length;
+
+    uTemp = cNum;
+
+    while (uTemp > 0)
+    {
+        --ptr;
+        *ptr = pcDigits[uTemp % 10];
+        uTemp /= 10;
+    }
+    if(neg){
+			--ptr;
+			*ptr = '-';
+		}
+		if(cNum == 0)  //if the number is 0 output a 0
+			*ptr = pcDigits[0];
+		
+    return length;
+}
+
+
+int16_t readGyro_Y(int16_t CumulativeGyro, int16_t Offset){
+	
+		HAL_Delay(10);
+		initiateTransaction(0x6B,1,0); //write transaction
+	  transmitData(0xAA,1);
+	  int16_t RxData;
+		initiateTransaction(0x6B,2,1); //set read transaction
+	  RxData = 0;
+	  RxData = read2byteData();
+		
+		transmitComplete();
+	
+	  CumulativeGyro =  RxData + CumulativeGyro - Offset;
+	   if (CumulativeGyro > 1200)  //cap the cumulative Gyro Motor can't run any faster than 180rpm or 1200dps
+			 CumulativeGyro = 1200;
+		 
+		 if (CumulativeGyro < -1200) //cap the cumulative gyro  Motor can't run any faster than 180rpm
+			 CumulativeGyro = -1200;
+		 
+	//replace this code	
+	if(RxData > 200)
+			{
+			//GPIOC->ODR |= GPIO_PIN_6;
+		  }
+		else if(RxData < -200)
+			{
+			//GPIOC->ODR |= GPIO_PIN_7;
+		  }
+			/*if(RxData > 2000)
+			{
+			GPIOC->ODR |= GPIO_PIN_6;
+		  TIM3->CCR1 = 4; //set to 20% of CCR
+			}
+		else if(RxData < -2000)
+			{
+			GPIOC->ODR |= GPIO_PIN_7;
+		  TIM3->CCR1 = 4;
+			}*/
+		//else
+		//	GPIOC->ODR &= ~(GPIO_PIN_6|GPIO_PIN_7); //red blue
+		
+		return CumulativeGyro;
+}
+
+void pwm_initialize(void){
+ // Configure Timer2 //
 	TIM2->PSC  = 8000-1;   /*Prescalar will divide by 8000 giving 1kHz clock and 1ms resolution 18.3.1 for explanation and 18.4.11 for register information Peripheral manual*/
-	TIM2->ARR  = 250;      //Periph Man 18.4.3 TIMER2 count to 250ms 18.4.10 Peripheral Manual
+	TIM2->ARR  = 500;      //Periph Man 18.4.3 TIMER2 count to 500ms 18.4.10 Peripheral Manual
 	TIM2->DIER = 1;				 //Periph Man 18.4.4 Update interrupt enable
   TIM2->CR1  = 0x0081;   //Periph Man 18.4.1 Auto Reload not buffered; Edge-aligned; Downcounter; Counter not stop;Update enabled Counter enabled
 	  // Configure Timer3 //
-	TIM3->PSC  = 1000-1;    //Set clock to 800kHz  
-	TIM3->ARR  = 10;     // changes every 1.25ms
+	TIM3->PSC  = 100-1;    //Set clock to 80kHz  
+	TIM3->ARR  = 100;     // changes every 1.25ms
 	  // setup timer 1 and timer 2 //
-	TIM3->CCMR1= 0x6868;  // Set CC1S CC2S to output mode  Peripheral Man 18.4.7  OC1M PWM Mode2 OC2M Mode 1
+	TIM3->CCMR1= 0x6868;  // Set CC1S CC2S to output mode  Peripheral Man 18.4.7  OC1M PWM Mode2 OC2M Mode 2
 	TIM3->CCMR2= 0;     
-	TIM3->CCR1 = 0;			 //Set to 20% of ARR
-	TIM3->CCR2 = 0;      //Set CCR to 20% of ARR
+	TIM3->CCR1 = 0;			 //Set to 0% of ARR
+	TIM3->CCR2 = 0;      //Set CCR to 0% of ARR
 	TIM3->CCER = 0x0011;  //18.4.9 Set Channel 1 and Chan2 to output enable
   TIM3->CR1  = 0x0081;  //enable timer and 18.4.1 periph man
 	  // Set outputs to Tim3_ch1 and TIM3_CH2 //
@@ -76,100 +279,31 @@ int main(void)
 	NVIC_EnableIRQ(TIM2_IRQn);  		//Enable TIM2 interrupt Section 4.2 Core Programming M0 Manual
 	NVIC_SetPriority(TIM2_IRQn,6);  //Configure EXTI0 interrupt priority Section 4.2.1 Core Prog M0 Manual
   /* End PWM Setup */
-  
-	/* I2C2 Setup */
-	GPIOB->MODER  |= 2 << GPIO_MODER_MODER11_Pos | 2 << GPIO_MODER_MODER13_Pos; //Set PB11 PB13 to Alternate function mode
+}
+void I2C2_Setup(void){
+  GPIOB->MODER  |= 2 << GPIO_MODER_MODER11_Pos | 2 << GPIO_MODER_MODER13_Pos; //Set PB11 PB13 to Alternate function mode
 	GPIOB->MODER  |= 1 << GPIO_MODER_MODER14_Pos;  //Set PB14 to output mode
 	GPIOB->OTYPER |= GPIO_OTYPER_OT_11|GPIO_OTYPER_OT_13; //PB11 and PB13 open-drain
 	GPIOB->AFR[1] |= GPIO_AF1_I2C2 << GPIO_AFRH_AFSEL11_Pos | GPIO_AF5_I2C2 << GPIO_AFRH_AFSEL13_Pos; //PB11 and PB13 Alternate function I2C2
 	GPIOC->MODER  |= 1|1 << GPIO_MODER_MODER6_Pos|1<<GPIO_MODER_MODER7_Pos|1<<GPIO_MODER_MODER8_Pos|1<<GPIO_MODER_MODER9_Pos; //PC0 to output mode LEDs PC6-9 to output
 	GPIOC->ODR     = 1; //PC0 Set High for address on GYRO
+	
 	/* Configure I2C2 */
 	I2C2->TIMINGR |= (1<<I2C_TIMINGR_PRESC_Pos)|(0x13 << I2C_TIMINGR_SCLL_Pos)|(0xF << I2C_TIMINGR_SCLH_Pos)|(0x2 << I2C_TIMINGR_SDADEL_Pos)|(0x4<<I2C_TIMINGR_SCLDEL_Pos); //Setting the timing according to Table 91
 	I2C2->CR1      = I2C_CR1_PE;
 	GPIOB->ODR     = GPIO_PIN_14; //configure address on Gyroscope
-	
-	HAL_Delay(100);
-	/* End I2C2 Setup */
-	
-	/* Enable the Gyroscope */
-		initiateTransaction(0x6B,2,0);
-	  
-	  uint8_t TXComplt = setupGyro(0x20,0x0B);
-	  
-	  if(TXComplt)
-		{
-     // GPIOC->ODR ^= GPIO_PIN_6; //toggle red LED if Gyro set up
-		}
-		
-    HAL_Delay(500);
-		
-	/* --Lab 3 - PWM controller  */ //I have this setup for PC6 and PC7 getting Tim2 and Tim3 outputs.  Change to PBx GPIO pin
-	/* --Lab 4 - USART for console control   Using PC10 and PC11*/
-	/* --Lab 5 - I2C for Gyroscope    Using PB15 SDA    PB13 SCL  PC0 SPI/I2C mode   PB14 Slave addr of gyroscope*/
-	/* Lab 6 - DAC for Sensing line on motor */
+}	
 
-	uint8_t temp = 0;
-  while (1)
-  {
-   	 
-	/* Code for GyroScope */
-    // ****** Read Out_X_L and Out_X_H ****** /
-		initiateTransaction(0x6B,1,0); //write transaction
-	  TXComplt = transmitData(0xA8,1);
-		if(TXComplt)
-	  {
-	   //GPIOC->ODR^= GPIO_PIN_7; //set red blue for check Out_TX
-	  }
-		initiateTransaction(0x6B,2,1); //set read transaction
-	  int16_t RxData = read2byteData();
-		
-		uint8_t TXComplete = transmitComplete();
-		if(RxData > 5000)
-			GPIOC->ODR |= GPIO_PIN_8;
-		else if(RxData < -5000)
-			GPIOC->ODR |= GPIO_PIN_9;
-		else
-			GPIOC->ODR &= ~(GPIO_PIN_8|GPIO_PIN_9);
-// ****** Read Out_X_L and Out_X_H ***** */
-		
-// ****** Read Out_Y_L and Out_Y_H ***** */
-	  HAL_Delay(10);
-		initiateTransaction(0x6B,1,0); //write transaction
-	  TXComplt = transmitData(0xAA,1);
-		if(TXComplt)
-	  {
-	   //GPIOC->ODR^= GPIO_PIN_7; //set red blue for check Out_TX	
-	  }
-		
-		
-		initiateTransaction(0x6B,2,1); //set read transaction
-	  RxData = read2byteData();
-		
-		TXComplete = transmitComplete();
-		if(RxData > 5000)
-			{
-			GPIOC->ODR |= GPIO_PIN_6;
-		  TIM3->CCR1 = 2; //set to 20% of CCR
-			}
-		else if(RxData < -5000)
-			{
-			GPIOC->ODR |= GPIO_PIN_7;
-		  TIM3->CCR1 = 0;
-			}
-		else
-			GPIOC->ODR &= ~(GPIO_PIN_6|GPIO_PIN_7);
-		
-		HAL_Delay(10);  
- /* End Code for Gyroscope */			 
-} //end while loop
-
+void USART3_Setup(void){
+  GPIOC->AFR[1] |= (GPIO_AF1_USART3 << GPIO_AFRH_AFSEL10_Pos)|(GPIO_AF1_USART3 << GPIO_AFRH_AFSEL11_Pos);  //Set PC10 and PC11 AFR registers to USART3
+	GPIOC->MODER  |= (2 << GPIO_MODER_MODER10_Pos)|(2 << GPIO_MODER_MODER11_Pos); //PC10 USART3_TX and PC11 USART3_RX to Alternate function mode
+	USART3->BRR  = HAL_RCC_GetHCLKFreq()/115200;
+	USART3->CR1 |= USART_CR1_UE|USART_CR1_TE|USART_CR1_RE|USART_CR1_RXNEIE; //Enable UART,TX,RX and RXInterrupt
+	  // Enable USART_Rx Interrupt //
+	NVIC_EnableIRQ(USART3_4_IRQn);
+	NVIC_SetPriority(USART3_4_IRQn,4); //set interrupt priority or USART
+	/* End USART3 setup */
 }
-
-/**
-  * @brief System Clock Configuration
-  * @retval None
-  */
 
 /* Code for I2C for Gyro */
 void initiateTransaction(uint8_t Addr, uint8_t numBytes,uint8_t rd_wr)
@@ -209,7 +343,8 @@ int16_t read2byteData(void)
 	while(((I2C2->ISR & I2C_ISR_RXNE) != I2C_ISR_RXNE)){}
 	uint8_t RxDataH = I2C2->RXDR;
 		
-	int16_t RxData = RxDataH << 8 | RxDataL;
+	int16_t RxData = 0;
+		RxData = RxDataH << 8 | RxDataL;
 	return RxData;
 }
 
@@ -287,7 +422,6 @@ void transmitString(char* character)
 	 }
 }
 /* End Code for USART*/
-
 
 
 void SystemClock_Config(void)
