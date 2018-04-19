@@ -22,7 +22,7 @@ void I2C2_Setup(void);
 void USART3_Setup(void);
 int16_t readGyro_Y(int16_t,int16_t);
 uint16_t itoa(int16_t cNum, char *cString);
-int16_t GyroToRPM(int16_t GyroData);
+int16_t GyroToRPM(int gyro_y_input);
 void RPMToDutyCycle(int16_t RPM);
 void transmitString(char* character);
 void transmitChar(char);
@@ -34,14 +34,17 @@ uint8_t readData(void);
 int16_t read2byteData(void);
 uint8_t transmitData(uint8_t data,uint8_t numBytes);
 uint8_t transmitComplete(void);
+
 static uint8_t transmitGyroData=1;
+//uint16_t gyroX = 0;
+uint16_t gyroY = 0;
 /**
   * @brief  The application entry point.
   *
   * @retval None
   */
 
-
+int RPM = 0;
 
 
 int main(void)
@@ -68,15 +71,15 @@ int main(void)
 	uint8_t TXComplt = setupGyro(0x20,0x0B); // enable X and Y axis
   HAL_Delay(500);
 		
-	int16_t GyroData = 0;
+	//int16_t GyroData = 0;
 	uint16_t count = 0;
 	char str[100] = ""; 
   int16_t GyroCal = 0;
-	int16_t RPM = 0;
   //Calibrate for the Gyro Offset
 	while(count<40)
 	{
-		GyroCal = readGyro_Y(GyroCal,0); //get 20 samples to find Gyro Offset
+		gyroY = readGyro_Y(gyroY, 0);
+		//GyroCal = readGyro_Y(GyroCal,0); //get 20 samples to find Gyro Offset
 		count++;
 		itoa(GyroCal,str);
 		transmitString(str);
@@ -94,17 +97,22 @@ int main(void)
 	 // ****** Read Y-AXIS ***** */
 	  clearString(str,100);
 		//GyroData  = 0;
-		GyroData  = readGyro_Y(GyroData,Offset);
-		RPM = GyroToRPM(GyroData);
-		RPMToDutyCycle(RPM);
+		gyroY  = readGyro_Y(0,Offset);
+		GyroToRPM(gyroY);
+		//RPM = GyroToRPM(gyroY);
+		//RPMToDutyCycle(RPM);
 		//Output to terminal//
 		transmitGyroData = GyroDataOutput(0,1); //get gyro output mode
 		if(transmitGyroData && (count % 10 == 1))
-			{ 
-			 itoa(GyroData,str);
+		{ 
+			 itoa(gyroY, str);
+		   transmitString(str);
+		   transmitString("\n");
+			 clearString(str,100);
+			 itoa(RPM,str);
 		   transmitString(str);
 		   transmitString("\n\r");
-		  }	
+		}	
    count++;			
 } //end while loop
 
@@ -146,16 +154,23 @@ void RPMToDutyCycle(int16_t RPM){
 	 
 }
 
-
-int16_t GyroToRPM(int16_t GyroData){
+/*
+Takes Gyro output (degrees/sec) converts to rpm (rotations/min)
+*/
+int16_t GyroToRPM(int gyro_y_input){
 	
 	//float radians = 0;
-	int16_t RPM = 0;
+	//int16_t RPM = 0;
 	//float pi = 3.14159;
 	//radians = GyroData * (pi/180);  //convert degrees per second to radians per second
-	RPM     = GyroData*(60/(360));
+	if(gyro_y_input > 0)
+		RPM     = (int)gyro_y_input/6;
+	else
+		RPM			= 2;
 	return RPM;
 }
+
+
 uint8_t GyroDataOutput(uint8_t GetSet, uint8_t valueToSet){
 	static uint8_t TxGyroData = 1;
 	if(GetSet)//set value if GetSet = 1;
@@ -222,33 +237,33 @@ int16_t readGyro_Y(int16_t CumulativeGyro, int16_t Offset){
 		transmitComplete();
 	
 	  CumulativeGyro =  RxData + CumulativeGyro - Offset;
-	   if (CumulativeGyro > 1200)  //cap the cumulative Gyro Motor can't run any faster than 180rpm or 1200dps
-			 CumulativeGyro = 1200;
+	   if (CumulativeGyro > 32000)  //cap the cumulative Gyro Motor can't run any faster than 180rpm or 1200dps
+			 CumulativeGyro = 32000;
 		 
-		 if (CumulativeGyro < -1200) //cap the cumulative gyro  Motor can't run any faster than 180rpm
-			 CumulativeGyro = -1200;
+		 if (CumulativeGyro < -32000) //cap the cumulative gyro  Motor can't run any faster than 180rpm
+			 CumulativeGyro = -32000;
 		 
-	//replace this code	
-	if(RxData > 200)
-			{
-			//GPIOC->ODR |= GPIO_PIN_6;
-		  }
+		//replace this code	
+		if(RxData > 200)
+		{
+				GPIOC->ODR |= GPIO_PIN_6;
+		}
 		else if(RxData < -200)
-			{
-			//GPIOC->ODR |= GPIO_PIN_7;
-		  }
-			/*if(RxData > 2000)
-			{
-			GPIOC->ODR |= GPIO_PIN_6;
-		  TIM3->CCR1 = 4; //set to 20% of CCR
-			}
+		{
+				GPIOC->ODR |= GPIO_PIN_7;
+		}
+		if(RxData > 2000)
+		{
+				GPIOC->ODR |= GPIO_PIN_6;
+				TIM3->CCR1 = 4; //set to 20% of CCR
+		}
 		else if(RxData < -2000)
-			{
+		{
 			GPIOC->ODR |= GPIO_PIN_7;
 		  TIM3->CCR1 = 4;
-			}*/
-		//else
-		//	GPIOC->ODR &= ~(GPIO_PIN_6|GPIO_PIN_7); //red blue
+		}
+		else
+			GPIOC->ODR &= ~(GPIO_PIN_6|GPIO_PIN_7); //red blue
 		
 		return CumulativeGyro;
 }
