@@ -78,10 +78,12 @@ int main(void)
 	NVIC_EnableIRQ(EXTI0_1_IRQn);	
 	NVIC_SetPriority(EXTI0_1_IRQn, 3);
 	
+	/*
 	GPIO_InitTypeDef initStr2 = {GPIO_PIN_0,
 	GPIO_MODE_INPUT,
 	GPIO_SPEED_FREQ_LOW,
 	GPIO_PULLDOWN};
+	*/
 	
 	/* Set up USART3 */
 	USART3_Setup();
@@ -119,47 +121,44 @@ int main(void)
   {
    	uint16_t RPMVal=0; 
 	 // ****** Read Y-AXIS ***** */
-		gyroY     = readGyro_Y(0,Offset);
-		GyroToRPM(gyroY);
-		dutyCycle = RPMToDutyCycle(RPM);
-		
-		if(debug_pressed == true)
+		if(debug_pressed)
 		{
 			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_6, GPIO_PIN_SET);
 		} else
 		{
-			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_6, GPIO_PIN_SET);
-		}
+			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_6, GPIO_PIN_RESET);
+			gyroY     = readGyro_Y(0,Offset);
+			GyroToRPM(gyroY);
+			dutyCycle = RPMToDutyCycle(RPM);
 		
-		//Output to terminal//
-		transmitGyroData = GyroDataOutput(0,1); //get gyro output mode
-		if(transmitGyroData && (count % 10 == 1))
+			//Output to terminal//
+			transmitGyroData = GyroDataOutput(0,1); //get gyro output mode
+			if(transmitGyroData && (count % 10 == 1))
 			{ 
 				//Gyro Data
-			 clearString(str,30);
-			 itoa(gyroY,str);
-			 transmitString("GyroData= ");
-		   transmitString(str);
-			 transmitString("Deg/Sec");
-		   transmitString("\n\r");
-			  //Duty Cycle
-			 clearString(str1,30);
-			 itoa(dutyCycle,str1);
-			 transmitString("DutyCycle= ");
-		   transmitString(str1);
-		   transmitString("%");
-			 transmitString("\n\r");
+				clearString(str,30);
+				itoa(gyroY,str);
+				transmitString("GyroData= ");
+				transmitString(str);
+				transmitString("Deg/Sec");
+				transmitString("\n\r");
+				//Duty Cycle
+				clearString(str1,30);
+				itoa(dutyCycle,str1);
+				transmitString("DutyCycle= ");
+				transmitString(str1);
+				transmitString("%");
+				transmitString("\n\r");
 				//RPM
-			 clearString(str2,30);
-			 itoa(RPM,str2);
-			 transmitString("RPM= ");
-			 transmitString(str2);
-		   transmitString("\n\r");
-			 
-			 
-		  }	
+				clearString(str2,30);
+				itoa(RPM,str2);
+				transmitString("RPM= ");
+				transmitString(str2);
+				transmitString("\n\r");
+		}	
 			
-   count++;			
+		count++;	
+	}			
 } //end while loop
 
 }
