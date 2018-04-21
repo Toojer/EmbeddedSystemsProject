@@ -37,12 +37,7 @@ uint8_t transmitComplete(void);
 static uint8_t transmitGyroData=1;
 uint16_t gyroY = 0;
 
-typedef int bool;
-#define true 1
-#define false 0
-
 int16_t GyroData = 0;
-bool debug_pressed;
 int RPM = 0;
 int16_t dutyCycle = 0;
 uint16_t count = 0;
@@ -50,6 +45,13 @@ char str[30] = "";
 char str1[30] = "";
 char str2[30] = "";
 int16_t GyroCal = 0;
+
+typedef int bool;
+#define true 1
+#define false 0
+	
+bool debug_pressed;
+
 /**
   * @brief  The application entry point.
   *
@@ -67,9 +69,8 @@ int main(void)
   /* Configure the system clock */
   SystemClock_Config();
   /* Enable the Peripheral Clocks*/
-	
 	RCC->AHBENR  |= RCC_AHBENR_GPIOCEN|RCC_AHBENR_GPIOBEN|RCC_AHBENR_GPIOAEN;   //enable GPIOC and GPIOB GPIOA Clock
-	RCC->APB1ENR |= RCC_APB1ENR_USART3EN|RCC_APB1ENR_TIM3EN|RCC_APB1ENR_TIM2EN|RCC_APB1ENR_I2C2EN; //enable USART3 clock Enable Timer 2 (TIM2EN) and Timer 3 (TIM3EN) registers  and I2C2 6.4.8 Peripheral Manual
+	RCC->APB1ENR |= RCC_APB1ENR_USART3EN|RCC_APB1ENR_TIM3EN|RCC_APB1ENR_TIM2EN|RCC_APB1ENR_I2C2EN;	//enable USART3 clock Enable Timer 2 (TIM2EN) and Timer 3 (TIM3EN) registers  and I2C2 6.4.8 Peripheral Manual
 	/* Set up PA0 */
 	EXTI->IMR |= EXTI_IMR_IM0; //unmask interrupt on channel 0
 	EXTI->RTSR |= EXTI_RTSR_RT0; //rising trigger enable on channel 0
@@ -77,13 +78,6 @@ int main(void)
 	SYSCFG->EXTICR[0] = SYSCFG_EXTICR1_EXTI0_PA; //set to pin 0 on channel A
 	NVIC_EnableIRQ(EXTI0_1_IRQn);	
 	NVIC_SetPriority(EXTI0_1_IRQn, 3);
-	
-	/*
-	GPIO_InitTypeDef initStr2 = {GPIO_PIN_0,
-	GPIO_MODE_INPUT,
-	GPIO_SPEED_FREQ_LOW,
-	GPIO_PULLDOWN};
-	*/
 	
 	/* Set up USART3 */
 	USART3_Setup();
@@ -119,46 +113,50 @@ int main(void)
 	
 	while (1)
   {
-   	uint16_t RPMVal=0; 
+    
 	 // ****** Read Y-AXIS ***** */
+		gyroY     = readGyro_Y(gyroY,Offset);
+		GyroToRPM(gyroY);
+		
 		if(debug_pressed)
 		{
-			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_6, GPIO_PIN_SET);
-		} else
-		{
-			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_6, GPIO_PIN_RESET);
-			gyroY     = readGyro_Y(0,Offset);
-			GyroToRPM(gyroY);
-			dutyCycle = RPMToDutyCycle(RPM);
+		 RPM = 0;
+		}	
+		dutyCycle = RPMToDutyCycle(RPM);
 		
-			//Output to terminal//
-			transmitGyroData = GyroDataOutput(0,1); //get gyro output mode
-			if(transmitGyroData && (count % 10 == 1))
+		//Output to terminal//
+		transmitGyroData = GyroDataOutput(0,1); //get gyro output mode
+		if(transmitGyroData && (count % 10 == 1))
 			{ 
 				//Gyro Data
-				clearString(str,30);
-				itoa(gyroY,str);
-				transmitString("GyroData= ");
-				transmitString(str);
-				transmitString("Deg/Sec");
-				transmitString("\n\r");
-				//Duty Cycle
-				clearString(str1,30);
-				itoa(dutyCycle,str1);
-				transmitString("DutyCycle= ");
-				transmitString(str1);
-				transmitString("%");
-				transmitString("\n\r");
+			 clearString(str,30);
+			 itoa(gyroY,str);
+			 transmitString("GyroData= ");
+		   transmitString(str);
+			 transmitString("Deg/Sec");
+		   transmitString("\n\r");
+			  //Duty Cycle
+			 clearString(str1,30);
+			 itoa(dutyCycle,str1);
+			 transmitString("DutyCycle= ");
+		   transmitString(str1);
+		   transmitString("%");
+			 transmitString("\n\r");
 				//RPM
-				clearString(str2,30);
-				itoa(RPM,str2);
-				transmitString("RPM= ");
-				transmitString(str2);
-				transmitString("\n\r");
-		}	
-			
-		count++;	
-	}			
+			 clearString(str2,30);
+			 itoa(RPM,str2);
+			 transmitString("RPM= ");
+			 transmitString(str2);
+		   transmitString("\n\r");
+			 
+			 if(debug_pressed)
+		   {
+		     dutyCycle = 0;
+	       gyroY = 0; //clear all data
+	    }	
+       
+		}			
+	count++;
 } //end while loop
 
 }
@@ -168,39 +166,8 @@ int main(void)
   * @retval None
   */
 
-//code for interupt
-//I seem to have a conceptual issue here.
-//for some reason I can't effect the debugged pressed value.
-//more testing later :/ need to go to TA session to get points back on the test.
-void EXTI0_1_IRQHandler(void)
-{
-	debug_pressed = debug_pressed? false: true; //this syntax just means
-	//value = conditional ? set_value_to_this_if_conditional_true : value_if_conditional_false;
-	/*
-	can also be written as
-	if(debug_pressed)
-		debug_pressed = false;
-	else
-		debug_pressed = true;
-	*/
-	HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_6);
-	EXTI->PR |= EXTI_PR_PIF0; //shows that an interrupt happened so it can be cleared to show its been handled
-	
-	/*volatile int i;
-	
-	HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_8 | GPIO_PIN_9);
-	EXTI->PR |= EXTI_PR_PIF0; //notify that there is a pending interrupt
-	
-	for(i = 0; i < 1500000; i++)
-	{
-		
-	}
-	HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_8 | GPIO_PIN_9);
-	*/
-}
-
 int16_t RPMToDutyCycle(int16_t RPM){
-	int16_t DutyCycleTemp = RPM/2;//dividing by 1.6 because motor runs at 160 rpms
+	int16_t DutyCycleTemp = RPM/6;//dividing by 1.6 because motor runs at 160 rpms
 	static uint16_t direction; //if the RPM is negative turn on correct direction.
 	
 	if(DutyCycleTemp <= 0 )
@@ -237,14 +204,24 @@ int16_t GyroToRPM(int16_t gyro_y_input)
 	//	RPM			= ;
 	return RPM;
 }
-/*
-int16_t GyroToRPM(int16_t GyroDataInput)
+void EXTI0_1_IRQHandler(void)
 {
-	int16_t RevPerMin = 0;
-	RevPerMin     = (int16_t)GyroDataInput*(60/(360));
-	return RevPerMin;
+	debug_pressed = debug_pressed? false: true; //this syntax just means
+	
+	//value = conditional ? set_value_to_this_if_conditional_true : value_if_conditional_false;
+	/*
+	can also be written as
+	if(debug_pressed)
+		debug_pressed = false;
+	else
+		debug_pressed = true;
+	*/
+	HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_8);
+	EXTI->PR |= EXTI_PR_PIF0; //shows that an interrupt happened so it can be cleared to show its been handled
+	
 }
-*/
+
+
 uint8_t GyroDataOutput(uint8_t GetSet, uint8_t valueToSet){
 	static uint8_t TxGyroData = 1;
 	if(GetSet)//set value if GetSet = 1;
@@ -300,7 +277,7 @@ uint16_t itoa(int16_t cNum, char *cString)
 
 int16_t readGyro_Y(int16_t CumulativeGyro, int16_t Offset){
 	
-		HAL_Delay(10);
+		HAL_Delay(15);
 		initiateTransaction(0x6B,1,0); //write transaction
 	  transmitData(0xAA,1);
 	  int16_t RxData;
@@ -316,29 +293,7 @@ int16_t readGyro_Y(int16_t CumulativeGyro, int16_t Offset){
 		 
 		 if (CumulativeGyro < -25000) //cap the cumulative gyro  Motor // can't run any faster than 180rpm
 			 CumulativeGyro = -25000;
-		 
-	//replace this code	
-	if(RxData > 200)
-			{
-			//GPIOC->ODR |= GPIO_PIN_6;
-		  }
-		else if(RxData < -200)
-			{
-			//GPIOC->ODR |= GPIO_PIN_7;
-		  }
-			/*if(RxData > 2000)
-			{
-			GPIOC->ODR |= GPIO_PIN_6;
-		  TIM3->CCR1 = 4; //set to 20% of CCR
-			}
-		else if(RxData < -2000)
-			{
-			GPIOC->ODR |= GPIO_PIN_7;
-		  TIM3->CCR1 = 4;
-			}*/
-		//else
-		//	GPIOC->ODR &= ~(GPIO_PIN_6|GPIO_PIN_7); //red blue
-		
+		 	
 		return CumulativeGyro;
 }
 
