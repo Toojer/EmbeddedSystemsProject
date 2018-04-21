@@ -203,14 +203,17 @@ void update_PID()
 	//time_offset = 1;
 	error = GyroCal - gyroY; //0 position will be at gyro cal found on initialization
 	derivative = error - last_error; 
+	
 	integral += error;
+	integral = integral > 3200 ? 3200 : integral;
+	integral = integral < 0 ? 0 : integral;
 	
 	control_var = (kp * error) + (ki * integral) + (kd * derivative); //control var should be pwm or rpm. Doesn't really matter.
 	
-	control_var = control_var > 255 ? 255 : control_var; //output limiters (helps protect from overprotection
-	control_var = control_var < -255 ? -255 : control_var;
+	//control_var = control_var > 100 ? 100 : control_var; //output limiters (helps protect from overprotection
+	//control_var = control_var < -100 ? -100 : control_var;
 	
-	dutyCycle = control_var;
+	dutyCycle = control_var/100; //todo: figure out what to divide by!
 }
 
 void init_Debug()
