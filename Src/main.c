@@ -33,6 +33,7 @@ uint8_t setupGyro(uint8_t Addr, uint8_t value);
 uint8_t readData(void);
 int16_t read2byteData(void);
 void init_Debug(void);
+void moveMotor(int16_t pwm);
 uint8_t transmitData(uint8_t data,uint8_t numBytes);
 uint8_t transmitComplete(void);
 void update_PID(void);
@@ -197,7 +198,7 @@ void update_PID()
 	//output = pwm
 	//feedback = gyroY
 	
-	int control_var;
+	int16_t control_var;
 	//float time_offset = 0.000125;
 	int last_error = error;	
 	//time_offset = 1;
@@ -210,10 +211,10 @@ void update_PID()
 	
 	control_var = (kp * error) + (ki * integral) + (kd * derivative); //control var should be pwm or rpm. Doesn't really matter.
 	
-	//control_var = control_var > 100 ? 100 : control_var; //output limiters (helps protect from overprotection
-	//control_var = control_var < -100 ? -100 : control_var;
+	control_var = control_var > 100 ? 100 : control_var; //output limiters (make sure in range for pwm)
+	control_var = control_var < -100 ? -100 : control_var;
 	
-	dutyCycle = control_var/100; //todo: figure out what to divide by!
+	moveMotor(control_var);
 }
 
 void init_Debug()
@@ -255,6 +256,30 @@ int16_t RPMToDutyCycle(int16_t RPM){
 	 TIM3->CCR1  = DutyCycleTemp; //set to duty Cycle of the CCR
 	 return DutyCycleTemp;
 	 
+}
+
+void motorForward(int16_t pwm)
+{
+	GPIOC->ODR |= GPIO_PIN_7;
+	GPIOC->ODR &= ~(GPIO_PIN_5);
+	
+	TIM3->CCR1 = pwm;
+}
+
+void motorReverse(int16_t pwm)
+{
+	GPIOC->ODR |= GPIO_PIN_7;
+	GPIOC->ODR &= ~(GPIO_PIN_6);
+	
+	TIM3->CCR1 = pwm;
+}
+
+void moveMotor(int16_t pwm)
+{
+	if(pwm > 0)
+		motorForward(pwm);
+	else
+		motorReverse(pwm);
 }
 
 int16_t GyroToRPM(int16_t gyro_y_input)
