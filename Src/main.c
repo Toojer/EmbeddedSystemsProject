@@ -34,6 +34,8 @@ uint8_t readData(void);
 int16_t read2byteData(void);
 uint8_t transmitData(uint8_t data,uint8_t numBytes);
 uint8_t transmitComplete(void);
+void update_PID(void);
+
 static uint8_t transmitGyroData=1;
 uint16_t gyroY = 0;
 
@@ -51,6 +53,12 @@ typedef int bool;
 #define false 0
 	
 bool debug_pressed;
+
+//pid vars:
+int error = 0;
+int derivative = 0;
+int kp = 1;
+int kd = 1;
 
 /**
   * @brief  The application entry point.
@@ -117,6 +125,7 @@ int main(void)
 	 // ****** Read Y-AXIS ***** */
 		gyroY     = readGyro_Y(gyroY,Offset);
 		GyroToRPM(gyroY);
+		update_PID();
 		
 		if(debug_pressed)
 		{
@@ -157,7 +166,7 @@ int main(void)
        
 		}			
 	count++;
-} //end while loop
+	} //end while loop
 
 }
 /*********End Project Main code *********************************************************************************************/
@@ -165,6 +174,24 @@ int main(void)
   * @brief System Clock Configuration
   * @retval None
   */
+
+void update_PID()
+{
+	//input = angle
+	//output = pwm
+	//feedback = gyroY
+	
+	int control_var;
+	int last_error = error;	
+	error = GyroCal - gyroY; //0 position will be at gyro cal found on initialization
+	derivative = error - last_error; 
+	control_var = (kp * error) + (kd * derivative); //control var should be pwm or rpm. Doesn't really matter.
+	
+	control_var = control_var > 255 ? 255 : control_var; //output limiters (helps protect from overprotection
+	control_var = control_var < -255 ? -255 : control_var;
+	
+	dutyCycle = control_var;
+}
 
 int16_t RPMToDutyCycle(int16_t RPM){
 	int16_t DutyCycleTemp = RPM/6;//dividing by 1.6 because motor runs at 160 rpms
