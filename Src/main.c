@@ -32,9 +32,11 @@ void initiateTransaction(uint8_t Addr, uint8_t numBytes,uint8_t rd_wr);
 uint8_t setupGyro(uint8_t Addr, uint8_t value);	
 uint8_t readData(void);
 int16_t read2byteData(void);
+void init_Debug(void);
 uint8_t transmitData(uint8_t data,uint8_t numBytes);
 uint8_t transmitComplete(void);
 void update_PID(void);
+void init_PID_TIMER(void);
 
 static uint8_t transmitGyroData=1;
 uint16_t gyroY = 0;
@@ -56,8 +58,11 @@ bool debug_pressed;
 
 //pid vars:
 int error = 0;
+int integral = 0;
 int derivative = 0;
-int kp = 1;
+
+int kp = 50;
+int ki = 60;
 int kd = 1;
 
 /**
@@ -65,9 +70,6 @@ int kd = 1;
   *
   * @retval None
   */
-
-
-
 
 int main(void)
 {
@@ -79,14 +81,8 @@ int main(void)
   /* Enable the Peripheral Clocks*/
 	RCC->AHBENR  |= RCC_AHBENR_GPIOCEN|RCC_AHBENR_GPIOBEN|RCC_AHBENR_GPIOAEN;   //enable GPIOC and GPIOB GPIOA Clock
 	RCC->APB1ENR |= RCC_APB1ENR_USART3EN|RCC_APB1ENR_TIM3EN|RCC_APB1ENR_TIM2EN|RCC_APB1ENR_I2C2EN;	//enable USART3 clock Enable Timer 2 (TIM2EN) and Timer 3 (TIM3EN) registers  and I2C2 6.4.8 Peripheral Manual
-	/* Set up PA0 */
-	EXTI->IMR |= EXTI_IMR_IM0; //unmask interrupt on channel 0
-	EXTI->RTSR |= EXTI_RTSR_RT0; //rising trigger enable on channel 0
-	RCC->APB2ENR |= RCC_APB2ENR_SYSCFGEN; //syscfg and clock enable
-	SYSCFG->EXTICR[0] = SYSCFG_EXTICR1_EXTI0_PA; //set to pin 0 on channel A
-	NVIC_EnableIRQ(EXTI0_1_IRQn);	
-	NVIC_SetPriority(EXTI0_1_IRQn, 3);
-	
+	/* Set up debug button */
+	init_Debug();
 	/* Set up USART3 */
 	USART3_Setup();
 	/* Setup PWM */
@@ -113,11 +109,12 @@ int main(void)
 		transmitString(str);
 	  transmitString("\n\r");
 	}
-		int16_t Offset = (int16_t) GyroCal/40;
-    transmitString("Gyro Calibrated Offset = ");
-	  itoa(Offset,str);
-		transmitString(str);
-		transmitString("\n\r");	
+	
+	int16_t Offset = (int16_t) GyroCal/40;
+  transmitString("Gyro Calibrated Offset = ");
+	itoa(Offset,str);
+	transmitString(str);
+	transmitString("\n\r");	
 	
 	while (1)
   {
@@ -125,14 +122,15 @@ int main(void)
 	 // ****** Read Y-AXIS ***** */
 		gyroY     = readGyro_Y(gyroY,Offset);
 		GyroToRPM(gyroY);
-		update_PID();
+		//update_PID();
 		
 		if(debug_pressed)
 		{
 		 RPM = 0;
 		}	
-		dutyCycle = RPMToDutyCycle(RPM);
+		//dutyCycle = RPMToDutyCycle(RPM);
 		
+		init_PID_TIMER();
 		//Output to terminal//
 		transmitGyroData = GyroDataOutput(0,1); //get gyro output mode
 		if(transmitGyroData && (count % 10 == 1))
@@ -169,11 +167,29 @@ int main(void)
 	} //end while loop
 
 }
-/*********End Project Main code *********************************************************************************************/
-/**
-  * @brief System Clock Configuration
-  * @retval None
-  */
+
+void init_PID_TIMER()
+{
+	//int clock_speed = 8000000;
+	RCC->APB1ENR |= RCC_APB1ENR_TIM6EN;
+	TIM6->PSC = 1001;
+	TIM6->ARR = 1;
+	//T = ARR * (PSC - 1)/clock_speed 
+	//125usec = 1 * 1000/8000000
+  TIM6->DIER |= TIM_DIER_UIE;             // Enable update event interrupt
+  TIM6->CR1 |= TIM_CR1_CEN;               // Enable Timer
+
+  NVIC_EnableIRQ(TIM6_DAC_IRQn);          // Enable interrupt in NVIC
+  NVIC_SetPriority(TIM6_DAC_IRQn,2);
+}
+
+void TIM6_DAC_IRQHandler(void) 
+{
+    // Call the PI update function
+    update_PID();
+
+    TIM6->SR &= ~TIM_SR_UIF;        // Acknowledge the interrupt
+}
 
 void update_PID()
 {
@@ -182,15 +198,30 @@ void update_PID()
 	//feedback = gyroY
 	
 	int control_var;
+	//float time_offset = 0.000125;
 	int last_error = error;	
+	//time_offset = 1;
 	error = GyroCal - gyroY; //0 position will be at gyro cal found on initialization
 	derivative = error - last_error; 
-	control_var = (kp * error) + (kd * derivative); //control var should be pwm or rpm. Doesn't really matter.
+	integral += error;
+	
+	control_var = (kp * error) + (ki * integral) + (kd * derivative); //control var should be pwm or rpm. Doesn't really matter.
 	
 	control_var = control_var > 255 ? 255 : control_var; //output limiters (helps protect from overprotection
 	control_var = control_var < -255 ? -255 : control_var;
 	
 	dutyCycle = control_var;
+}
+
+void init_Debug()
+{
+	/* Set up PA0 */
+	EXTI->IMR |= EXTI_IMR_IM0; //unmask interrupt on channel 0
+	EXTI->RTSR |= EXTI_RTSR_RT0; //rising trigger enable on channel 0
+	RCC->APB2ENR |= RCC_APB2ENR_SYSCFGEN; //syscfg and clock enable
+	SYSCFG->EXTICR[0] = SYSCFG_EXTICR1_EXTI0_PA; //set to pin 0 on channel A
+	NVIC_EnableIRQ(EXTI0_1_IRQn);	
+	NVIC_SetPriority(EXTI0_1_IRQn, 3);
 }
 
 int16_t RPMToDutyCycle(int16_t RPM){
