@@ -32,15 +32,10 @@ void initiateTransaction(uint8_t Addr, uint8_t numBytes,uint8_t rd_wr);
 uint8_t setupGyro(uint8_t Addr, uint8_t value);	
 uint8_t readData(void);
 int16_t read2byteData(void);
-void init_Debug(void);
-void moveMotor(int16_t pwm);
 uint8_t transmitData(uint8_t data,uint8_t numBytes);
 uint8_t transmitComplete(void);
-void update_PID(void);
-void init_PID_TIMER(void);
-
 static uint8_t transmitGyroData=1;
-uint16_t gyroY = 0;
+int16_t gyroY = 0;
 
 int16_t GyroData = 0;
 int RPM = 0;
@@ -57,20 +52,15 @@ typedef int bool;
 	
 bool debug_pressed;
 
-//pid vars:
-int error = 0;
-int integral = 0;
-int derivative = 0;
-
-int kp = 50;
-int ki = 60;
-int kd = 1;
-
 /**
   * @brief  The application entry point.
   *
   * @retval None
   */
+
+
+uint8_t pc = 0;
+int dif = 0;
 
 int main(void)
 {
@@ -82,8 +72,14 @@ int main(void)
   /* Enable the Peripheral Clocks*/
 	RCC->AHBENR  |= RCC_AHBENR_GPIOCEN|RCC_AHBENR_GPIOBEN|RCC_AHBENR_GPIOAEN;   //enable GPIOC and GPIOB GPIOA Clock
 	RCC->APB1ENR |= RCC_APB1ENR_USART3EN|RCC_APB1ENR_TIM3EN|RCC_APB1ENR_TIM2EN|RCC_APB1ENR_I2C2EN;	//enable USART3 clock Enable Timer 2 (TIM2EN) and Timer 3 (TIM3EN) registers  and I2C2 6.4.8 Peripheral Manual
-	/* Set up debug button */
-	init_Debug();
+	/* Set up PA0 */
+	EXTI->IMR |= EXTI_IMR_IM0; //unmask interrupt on channel 0
+	EXTI->RTSR |= EXTI_RTSR_RT0; //rising trigger enable on channel 0
+	RCC->APB2ENR |= RCC_APB2ENR_SYSCFGEN; //syscfg and clock enable
+	SYSCFG->EXTICR[0] = SYSCFG_EXTICR1_EXTI0_PA; //set to pin 0 on channel A
+	NVIC_EnableIRQ(EXTI0_1_IRQn);	
+	NVIC_SetPriority(EXTI0_1_IRQn, 3);
+	
 	/* Set up USART3 */
 	USART3_Setup();
 	/* Setup PWM */
@@ -110,132 +106,62 @@ int main(void)
 		transmitString(str);
 	  transmitString("\n\r");
 	}
+		int16_t Offset = (int16_t) GyroCal/40;
+    transmitString("Gyro Calibrated Offset = ");
+	  itoa(Offset,str);
+		transmitString(str);
+		transmitString("\n\r");	
 	
-	int16_t Offset = (int16_t) GyroCal/40;
-  transmitString("Gyro Calibrated Offset = ");
-	itoa(Offset,str);
-	transmitString(str);
-	transmitString("\n\r");	
-	
+	int last_gyroY;
 	while (1)
   {
-    
-	 // ****** Read Y-AXIS ***** */
-		gyroY     = readGyro_Y(gyroY,Offset);
-		GyroToRPM(gyroY);
-		//update_PID();
+    //pc = 0; 
+	  // ****** Read Y-AXIS ***** */
+		last_gyroY = gyroY;
 		
+		gyroY     = readGyro_Y(gyroY, 0);
+		//pc++;
+		if(last_gyroY == gyroY)
+			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_8, GPIO_PIN_SET);
+		
+		GyroToRPM(gyroY);
+		//pc++;
 		if(debug_pressed)
 		{
 		 RPM = 0;
 		}	
-		//dutyCycle = RPMToDutyCycle(RPM);
 		
-		init_PID_TIMER();
-		//Output to terminal//
-		transmitGyroData = GyroDataOutput(0,1); //get gyro output mode
-		if(transmitGyroData && (count % 10 == 1))
-			{ 
-				//Gyro Data
-			 clearString(str,30);
-			 itoa(gyroY,str);
-			 transmitString("GyroData= ");
-		   transmitString(str);
-			 transmitString("Deg/Sec");
-		   transmitString("\n\r");
-			  //Duty Cycle
-			 clearString(str1,30);
-			 itoa(dutyCycle,str1);
-			 transmitString("DutyCycle= ");
-		   transmitString(str1);
-		   transmitString("%");
-			 transmitString("\n\r");
-				//RPM
-			 clearString(str2,30);
-			 itoa(RPM,str2);
-			 transmitString("RPM= ");
-			 transmitString(str2);
-		   transmitString("\n\r");
-			 
-			 if(debug_pressed)
-		   {
-		     dutyCycle = 0;
-	       gyroY = 0; //clear all data
-	    }	
-       
-		}			
-	count++;
-	} //end while loop
+		dif = gyroY-last_gyroY;
+		dif = dif < 0? dif*-1:dif;
+		//if(dif > 2000)
+		dutyCycle = RPMToDutyCycle(RPM);
+		//HAL_Delay(1);
+} //end while loop
 
 }
-
-void init_PID_TIMER()
-{
-	//int clock_speed = 8000000;
-	RCC->APB1ENR |= RCC_APB1ENR_TIM6EN;
-	TIM6->PSC = 1001;
-	TIM6->ARR = 1;
-	//T = ARR * (PSC - 1)/clock_speed 
-	//125usec = 1 * 1000/8000000
-  TIM6->DIER |= TIM_DIER_UIE;             // Enable update event interrupt
-  TIM6->CR1 |= TIM_CR1_CEN;               // Enable Timer
-
-  NVIC_EnableIRQ(TIM6_DAC_IRQn);          // Enable interrupt in NVIC
-  NVIC_SetPriority(TIM6_DAC_IRQn,2);
-}
-
-void TIM6_DAC_IRQHandler(void) 
-{
-    // Call the PI update function
-    update_PID();
-
-    TIM6->SR &= ~TIM_SR_UIF;        // Acknowledge the interrupt
-}
-
-void update_PID()
-{
-	//input = angle
-	//output = pwm
-	//feedback = gyroY
-	
-	int16_t control_var;
-	//float time_offset = 0.000125;
-	int last_error = error;	
-	//time_offset = 1;
-	error = GyroCal - gyroY; //0 position will be at gyro cal found on initialization
-	derivative = error - last_error; 
-	
-	integral += error;
-	integral = integral > 3200 ? 3200 : integral;
-	integral = integral < 0 ? 0 : integral;
-	
-	control_var = (kp * error) + (ki * integral) + (kd * derivative); //control var should be pwm or rpm. Doesn't really matter.
-	
-	control_var = control_var > 100 ? 100 : control_var; //output limiters (make sure in range for pwm)
-	control_var = control_var < -100 ? -100 : control_var;
-	
-	moveMotor(control_var);
-}
-
-void init_Debug()
-{
-	/* Set up PA0 */
-	EXTI->IMR |= EXTI_IMR_IM0; //unmask interrupt on channel 0
-	EXTI->RTSR |= EXTI_RTSR_RT0; //rising trigger enable on channel 0
-	RCC->APB2ENR |= RCC_APB2ENR_SYSCFGEN; //syscfg and clock enable
-	SYSCFG->EXTICR[0] = SYSCFG_EXTICR1_EXTI0_PA; //set to pin 0 on channel A
-	NVIC_EnableIRQ(EXTI0_1_IRQn);	
-	NVIC_SetPriority(EXTI0_1_IRQn, 3);
-}
+/*********End Project Main code *********************************************************************************************/
+/**
+  * @brief System Clock Configuration
+  * @retval None
+  */
+int previousDutyCycle = 0;
 
 int16_t RPMToDutyCycle(int16_t RPM){
-	int16_t DutyCycleTemp = RPM/6;//dividing by 1.6 because motor runs at 160 rpms
+	int16_t DutyCycleTemp = RPM/50;//dividing by 1.6 because motor runs at 160 rpms
+	previousDutyCycle = dutyCycle;
 	static uint16_t direction; //if the RPM is negative turn on correct direction.
+	
+	
+	//int dif = previousDutyCycle-DutyCycleTemp;
+	//dif = dif < 0 ? dif*-1 : dif;
 	
 	if(DutyCycleTemp <= 0 )
 	{
+		
 		if (direction != GPIO_PIN_6)
 		{
+			//if(dif > 10)
+			//	HAL_Delay(20);
 			GPIOC->ODR |= GPIO_PIN_6;
 			GPIOC->ODR &= ~(GPIO_PIN_7);   //set the direction of motor
 		  direction = GPIO_PIN_6;
@@ -243,49 +169,30 @@ int16_t RPMToDutyCycle(int16_t RPM){
 	  DutyCycleTemp = DutyCycleTemp * (-1); //make the duty cycle a positive number
 	}
 	else
-		if (direction != GPIO_PIN_7)
+		if (direction != GPIO_PIN_7 )
 		{
+			//if(dif > 10)
+			//	HAL_Delay(20);
 			GPIOC->ODR |= GPIO_PIN_7;
 			GPIOC->ODR &= ~(GPIO_PIN_6);   //set the direction of motor
 		  direction = GPIO_PIN_7;
 		}
-	 
+	
 	if(DutyCycleTemp > 100) //cap the duty cycle at 100%
 		DutyCycleTemp = 100;
+	if(DutyCycleTemp < 25)
+		DutyCycleTemp = 0;
 	
 	 TIM3->CCR1  = DutyCycleTemp; //set to duty Cycle of the CCR
+	 //HAL_Delay(50);
 	 return DutyCycleTemp;
 	 
-}
-
-void motorForward(int16_t pwm)
-{
-	GPIOC->ODR |= GPIO_PIN_7;
-	GPIOC->ODR &= ~(GPIO_PIN_5);
-	
-	TIM3->CCR1 = pwm;
-}
-
-void motorReverse(int16_t pwm)
-{
-	GPIOC->ODR |= GPIO_PIN_7;
-	GPIOC->ODR &= ~(GPIO_PIN_6);
-	
-	TIM3->CCR1 = pwm;
-}
-
-void moveMotor(int16_t pwm)
-{
-	if(pwm > 0)
-		motorForward(pwm);
-	else
-		motorReverse(pwm);
 }
 
 int16_t GyroToRPM(int16_t gyro_y_input)
 {
 	//if(gyro_y_input >= 0)
-		RPM     = gyro_y_input/6;
+	RPM     = gyro_y_input/6;
 //	else
 	//	RPM			= ;
 	return RPM;
@@ -361,8 +268,8 @@ uint16_t itoa(int16_t cNum, char *cString)
 }
 
 
-int16_t readGyro_Y(int16_t CumulativeGyro, int16_t Offset){
-	
+int16_t readGyro_Y(int16_t CumulativeGyro, int16_t Offset)
+{		
 		HAL_Delay(15);
 		initiateTransaction(0x6B,1,0); //write transaction
 	  transmitData(0xAA,1);
@@ -374,12 +281,13 @@ int16_t readGyro_Y(int16_t CumulativeGyro, int16_t Offset){
 		transmitComplete();
 	
 	  CumulativeGyro =  RxData + CumulativeGyro - Offset;
-	   if (CumulativeGyro > 25000)  //cap the cumulative Gyro Motor  // can't run any faster than 180rpm or 1200dps
+	   
+		if (CumulativeGyro > 25000)  //cap the cumulative Gyro Motor  // can't run any faster than 180rpm or 1200dps
 			 CumulativeGyro = 25000;
 		 
 		 if (CumulativeGyro < -25000) //cap the cumulative gyro  Motor // can't run any faster than 180rpm
 			 CumulativeGyro = -25000;
-		 	
+		 
 		return CumulativeGyro;
 }
 
