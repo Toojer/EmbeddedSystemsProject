@@ -20,7 +20,7 @@ void SystemClock_Config(void);
 void pwm_initialize(void);
 void I2C2_Setup(void);
 void USART3_Setup(void);
-int16_t readGyro_Y(int16_t,int16_t);
+int16_t readGyro_Y(void);
 uint16_t itoa(int16_t cNum, char *cString);
 int16_t GyroToRPM(int16_t GyroData);
 int16_t RPMToDutyCycle(int16_t RPM);
@@ -34,7 +34,10 @@ uint8_t readData(void);
 int16_t read2byteData(void);
 uint8_t transmitData(uint8_t data,uint8_t numBytes);
 uint8_t transmitComplete(void);
-static uint8_t transmitGyroData=1;
+uint16_t moveMotor(int16_t gyroY);
+void updatePID(void);
+void init_PID(void);
+//static uint8_t transmitGyroData=1;
 int16_t gyroY = 0;
 
 int16_t GyroData = 0;
@@ -44,11 +47,20 @@ uint16_t count = 0;
 char str[30] = ""; 
 char str1[30] = "";
 char str2[30] = "";
+
 int16_t GyroCal = 0;
+int16_t integral = 0;
+int16_t control = 0;
+
+int16_t kp = 1;
+int16_t ki = 1;
+int16_t kd = 1;
 
 typedef int bool;
 #define true 1
 #define false 0
+	
+int16_t error = 0;
 	
 bool debug_pressed;
 
@@ -98,9 +110,12 @@ int main(void)
 	
 	
   //Calibrate for the Gyro Offset
+	
+	GyroCal = 0;
+	
 	while(count<40)
 	{
-		GyroCal = readGyro_Y(GyroCal,0); //get 20 samples to find Gyro Offset
+		GyroCal += readGyro_Y(); //get 20 samples to find Gyro Offset
 		count++;
 		itoa(GyroCal,str);
 		transmitString(str);
@@ -113,37 +128,124 @@ int main(void)
 		transmitString("\n\r");	
 	
 	int last_gyroY;
+	init_PID();
+	
 	while (1)
   {
     //pc = 0; 
 	  // ****** Read Y-AXIS ***** */
 		last_gyroY = gyroY;
 		
-		gyroY     = readGyro_Y(gyroY, 0);
+		//readGyro_Y();
+		
 		//pc++;
 		if(last_gyroY == gyroY)
 			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_8, GPIO_PIN_SET);
 		
-		GyroToRPM(gyroY);
-		//pc++;
-		if(debug_pressed)
-		{
-		 RPM = 0;
-		}	
-		
-		dif = gyroY-last_gyroY;
-		dif = dif < 0? dif*-1:dif;
+		//GyroToRPM(gyroY);
+		//updatePID();
+		//dif = gyroY-last_gyroY;
+		//dif = dif < 0? dif*-1:dif;
 		//if(dif > 2000)
-		dutyCycle = RPMToDutyCycle(RPM);
+		//dutyCycle = RPMToDutyCycle(RPM);
+		//moveMotor(control);
+		//dutyCycle = moveMotor(gyroY);
 		//HAL_Delay(1);
-} //end while loop
+	} //end while loop
+}
 
+void init_PID()
+{
+	//int clock_speed = 8000000;
+	RCC->APB1ENR |= RCC_APB1ENR_TIM7EN;
+	TIM7->PSC = 1001;
+	TIM7->ARR = 100;
+	//T = ARR * (PSC - 1)/clock_speed 
+	//125usec = 1 * 1000/8000000
+  TIM7->DIER |= TIM_DIER_UIE;             // Enable update event interrupt
+  TIM7->CR1 |= TIM_CR1_CEN;               // Enable Timer
+
+  NVIC_EnableIRQ(TIM7_IRQn);          // Enable interrupt in NVIC
+  NVIC_SetPriority(TIM7_IRQn,2);
+}
+
+void TIM7_IRQHandler(void) {
+    /* Calculate the motor speed in raw encoder counts
+     * Note the motor speed is signed! Motor can be run in reverse.
+     * Speed is measured by how far the counter moved from center point
+     */
+	readGyro_Y();
+	
+  updatePID();
+	
+	moveMotor(control);
+
+  TIM6->SR &= ~TIM_SR_UIF;        // Acknowledge the interrupt
+}
+
+void updatePID()
+{
+	int16_t derivative;
+	int16_t lastError = error;
+	error = gyroY;//+GyroCal;
+	integral += error;
+	derivative = error - lastError;
+	
+	control = (kp * error) + (ki * integral) + (kd * derivative);
+	
+	if (integral > 25000)  //cap the cumulative Gyro Motor  // can't run any faster than 180rpm or 1200dps
+		integral = 25000;
+		 
+	if (integral < -25000) //cap the cumulative gyro  Motor // can't run any faster than 180rpm
+		integral = -25000;
+		
 }
 /*********End Project Main code *********************************************************************************************/
 /**
   * @brief System Clock Configuration
   * @retval None
   */
+
+uint16_t moveMotor(int16_t gyroY)
+{
+	int16_t duty_cycle = gyroY/300;
+	static uint16_t d;
+	
+	
+	if(duty_cycle<= 0 )
+	{
+		
+		if (d != GPIO_PIN_6)
+		{
+			//if(dif > 10)
+			//	HAL_Delay(20);
+			GPIOC->ODR |= GPIO_PIN_6;
+			GPIOC->ODR &= ~(GPIO_PIN_7);   //set the direction of motor
+		  d = GPIO_PIN_6;
+		}
+	  duty_cycle = duty_cycle * (-1); //make the duty cycle a positive number
+	}
+	else
+		if (d != GPIO_PIN_7 )
+		{
+			//if(dif > 10)
+			//	HAL_Delay(20);
+			GPIOC->ODR |= GPIO_PIN_7;
+			GPIOC->ODR &= ~(GPIO_PIN_6);   //set the direction of motor
+		  d = GPIO_PIN_7;
+		}
+	
+	if(duty_cycle > 100) //cap the duty cycle at 100%
+		duty_cycle = 100;
+	if(duty_cycle  < 35) //ADJUST
+		duty_cycle = 0;
+	
+	dutyCycle = duty_cycle;
+	TIM3->CCR1  = duty_cycle; //set to duty Cycle of the CCR
+	//HAL_Delay(50);
+	return duty_cycle;
+}
+
 int previousDutyCycle = 0;
 
 int16_t RPMToDutyCycle(int16_t RPM){
@@ -268,7 +370,7 @@ uint16_t itoa(int16_t cNum, char *cString)
 }
 
 
-int16_t readGyro_Y(int16_t CumulativeGyro, int16_t Offset)
+int16_t readGyro_Y()
 {		
 		HAL_Delay(15);
 		initiateTransaction(0x6B,1,0); //write transaction
@@ -280,15 +382,9 @@ int16_t readGyro_Y(int16_t CumulativeGyro, int16_t Offset)
 		
 		transmitComplete();
 	
-	  CumulativeGyro =  RxData + CumulativeGyro - Offset;
-	   
-		if (CumulativeGyro > 25000)  //cap the cumulative Gyro Motor  // can't run any faster than 180rpm or 1200dps
-			 CumulativeGyro = 25000;
-		 
-		 if (CumulativeGyro < -25000) //cap the cumulative gyro  Motor // can't run any faster than 180rpm
-			 CumulativeGyro = -25000;
-		 
-		return CumulativeGyro;
+	  gyroY = RxData;
+	    
+		return gyroY;
 }
 
 void pwm_initialize(void){
